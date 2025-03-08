@@ -1,0 +1,12 @@
+body {
+  margin: 0;
+  font-family: sans-serif;
+  background-color: #343541;
+  color: #fff;
+}
+
+.app-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
