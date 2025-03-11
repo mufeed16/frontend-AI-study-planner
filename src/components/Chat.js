@@ -6,13 +6,13 @@ import {
     Container,
     Typography,
     Box,
-    Paper,
     List,
     ListItem,
     ListItemText,
     AppBar,
     Toolbar,
     IconButton,
+    CircularProgress,
 } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
@@ -21,31 +21,87 @@ import { useNavigate } from 'react-router-dom';
 import './Chat.css';
 
 const Chat = ({ handleLogout, userRole }) => {
-    const [query, setQuery] = useState('');
-    const [results, setResults] = useState([]);
-    const navigate = useNavigate();
+    const [messages, setMessages] = useState([]);
+    const [inputMessage, setInputMessage] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
     const chatHistoryRef = useRef(null);
+    const navigate = useNavigate();
 
     useEffect(() => {
-        // Scroll to bottom on new messages
         if (chatHistoryRef.current) {
             chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
         }
-    }, [results]);
+    }, [messages]);
 
-    const handleSubmit = async (event) => {
-        event.preventDefault();
+    const sendMessage = async (e) => {
+        e.preventDefault();
+        if (!inputMessage.trim()) return;
+
         try {
+            setIsLoading(true);
             const token = localStorage.getItem('token');
-            const response = await axios.post('http://localhost:5000/query', { query: query }, {
-                headers: {
-                    'Authorization': `Bearer ${token}`
+            
+            // Add user message immediately
+            setMessages(prev => [...prev, {
+                type: 'user',
+                content: inputMessage,
+                timestamp: new Date()
+            }]);
+            
+            setInputMessage('');
+
+            const eventSource = new EventSource(
+                `http://localhost:5000/query?token=${token}`
+            );
+
+            // Send the query
+            await axios.post('http://localhost:5000/query', 
+                { query: inputMessage },
+                { headers: { 'Authorization': `Bearer ${token}` }}
+            );
+
+            let currentResponse = '';
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'token') {
+                    currentResponse += data.token;
+                    setMessages(prev => {
+                        const newMessages = [...prev];
+                        const lastMessage = newMessages[newMessages.length - 1];
+                        if (lastMessage?.type === 'bot') {
+                            lastMessage.content = currentResponse;
+                        } else {
+                            newMessages.push({
+                                type: 'bot',
+                                content: currentResponse,
+                                timestamp: new Date()
+                            });
+                        }
+                        return newMessages;
+                    });
                 }
-            });
-            setResults(prevResults => [...prevResults, ...response.data.results]);
-            setQuery(''); // Clear the input after sending
+            };
+
+            eventSource.onerror = (error) => {
+                console.error("EventSource error:", error);
+                eventSource.close();
+                setMessages(prev => [...prev, {
+                    type: 'error',
+                    content: 'Failed to get response. Please try again.',
+                    timestamp: new Date()
+                }]);
+                setIsLoading(false);
+            };
+
         } catch (error) {
-            console.error("Error querying the chatbot:", error);
+            console.error("Error sending message:", error);
+            setMessages(prev => [...prev, {
+                type: 'error',
+                content: 'Failed to send message. Please try again.',
+                timestamp: new Date()
+            }]);
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -80,54 +136,49 @@ const Chat = ({ handleLogout, userRole }) => {
                     </IconButton>
                 </Toolbar>
             </AppBar>
+
             <Box mt={3} className="chat-interface">
                 <div className="chat-history" ref={chatHistoryRef}>
                     <List>
-                        {results.map((result, index) => (
-                            <ListItem key={index} alignItems="flex-start" className={`chat-message ${result.source === 'user' ? 'user-message' : 'bot-message'}`}>
+                        {messages.map((message, index) => (
+                            <ListItem 
+                                key={index}
+                                className={`chat-message ${message.type === 'user' ? 'user-message' : 'bot-message'}`}
+                            >
                                 <ListItemText
-                                    primary={result.text}
-                                    secondary={
-                                        <React.Fragment>
-                                            {result.sources && result.sources.length > 0 ? (
-                                                <Typography
-                                                    component="span"
-                                                    variant="body2"
-                                                    color="textPrimary"
-                                                >
-                                                    Sources: {result.sources.join(', ')}
-                                                </Typography>
-                                            ) : (
-                                                "No sources available."
-                                            )}
-                                        </React.Fragment>
-                                    }
+                                    primary={message.content}
+                                    secondary={new Date(message.timestamp).toLocaleTimeString()}
                                 />
                             </ListItem>
                         ))}
                     </List>
                 </div>
-                <Paper elevation={3} className="chat-input-area">
-                    <form onSubmit={handleSubmit} className="chat-input-form">
+
+                <Box
+                    component="form"
+                    onSubmit={sendMessage}
+                    className="chat-input-area"
+                >
+                    <div className="chat-input-form">
                         <TextField
-                            label="Enter your query"
-                            variant="outlined"
                             fullWidth
-                            value={query}
-                            onChange={(e) => setQuery(e.target.value)}
-                            margin="normal"
+                            placeholder="Type your message..."
+                            value={inputMessage}
+                            onChange={(e) => setInputMessage(e.target.value)}
+                            disabled={isLoading}
                             className="chat-input"
                         />
                         <Button
                             type="submit"
                             variant="contained"
-                            color="primary"
+                            disabled={isLoading}
                             className="send-button"
+                            endIcon={isLoading && <CircularProgress size={20} color="inherit" />}
                         >
                             Send
                         </Button>
-                    </form>
-                </Paper>
+                    </div>
+                </Box>
             </Box>
         </Container>
     );
